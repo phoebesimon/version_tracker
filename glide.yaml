@@ -1,0 +1,4 @@
+package: github.com/phoebesimon/latest_os_version_tracker
+import:
+- package: github.com/urfave/cli
+  version: ~1.19.1

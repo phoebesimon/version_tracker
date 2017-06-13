@@ -1,0 +1,14 @@
+hash: 3fa12cde968c8f5070108f1dbfbe35610da47f165086916acace2cd03bff526e
+updated: 2017-05-24T20:31:25.704575678Z
+imports:
+- name: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
+- name: github.com/urfave/cli
+  version: 0bdeddeeb0f650497d603c4ad7b20cfe685682f6
+- name: golang.org/x/sys
+  version: 9f30dcbe5be197894515a338a9bda9253567ea8f
+  subpackages:
+  - unix
+- name: howett.net/plist
+  version: 2f847ea62b17703c861484a09f0e5841328a2cb9
+testImports: []
