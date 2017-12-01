@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/phoebesimon/version_tracker/tracker"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 

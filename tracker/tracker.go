@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 )
 
 type VersionsInfo struct {
-	LatestVersions sort.StringSlice
+	LatestVersions map[string]bool
 	LastModified   time.Time
 }
 
@@ -99,15 +99,15 @@ func MakeTracker(addr string, interval int) *Tracker {
 	osVersionsMap := make(map[string]*VersionsInfo)
 
 	osVersionsMap[OSTypeMac] = &VersionsInfo{
-		LatestVersions: []string{},
+		LatestVersions: map[string]bool{},
 		LastModified:   time.Time{},
 	}
 	osVersionsMap[OSTypeWindows] = &VersionsInfo{
-		LatestVersions: []string{},
+		LatestVersions: map[string]bool{},
 		LastModified:   time.Time{},
 	}
 	osVersionsMap[OSTypeLinux] = &VersionsInfo{
-		LatestVersions: []string{},
+		LatestVersions: map[string]bool{},
 		LastModified:   time.Time{},
 	}
 

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"howett.net/plist"
 )
 
@@ -27,7 +27,8 @@ var MacCatalogs = map[string]string{
 	//"10.9":  "index-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
 	//"10.10": "index-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
 	//"10.11": "index-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
-	"10.12": "index-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
+	//"10.12": "index-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
+	"10.13": "index-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
 }
 
 var VersionRegex = regexp.MustCompile(`(?ms)\s*"\s*(SU_VERS|SU_VERSION)\s*"\s*=\s*"\s*([0-9a-zA-Z\.\s]+)\s*"\s*;$`)
@@ -41,9 +42,10 @@ type ProductMap struct {
 	//Lion         *Product `plist:"031-12217"`    //10.7
 	//MountainLion *Product `plist:"031-0630"`     //10.8
 	//Mavericks    *Product `plist:"031-07602"`    //10.9
-	Yosemite  *Product `plist:"031-30888"` //10.10
-	ElCapitan *Product `plist:"031-63178"` //10.11
-	Sierra    *Product `plist:"031-99462"` //10.12
+	Yosemite   *Product `plist:"031-30888"` //10.10
+	ElCapitan  *Product `plist:"031-63178"` //10.11
+	Sierra     *Product `plist:"091-22860"` //10.12
+	HighSierra *Product `plist:"091-39211"` //10.13
 }
 
 type Product struct {
@@ -60,6 +62,24 @@ type DistributionMap struct {
 func (t *Tracker) getLatestVersion(distributionURL string, lastModified time.Time) (string, error) {
 	// Request the distribution info
 	resp, err := t.makeRequest(distributionURL, lastModified)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"timestamp":       time.Now().UnixNano(),
+			"distributionURL": distributionURL,
+			"err":             err,
+		}).Error("Error making request")
+		return "", err
+	}
+
+	if resp.StatusCode != 200 {
+		log.WithFields(log.Fields{
+			"timestamp":     time.Now().Format("Mon, 2 Jan 2006 15:04:05 GMT"),
+			"last_modified": lastModified.Format("Mon, 2 Jan 2006 15:04:05 GMT"),
+			"status_code":   resp.StatusCode,
+		}).Debug("Distribution URL has not been updated since we last pulled it; short-circuiting.")
+		return "", nil
+	}
+
 	body, err := ioutil.ReadAll(io.Reader(resp.Body))
 	if err != nil {
 		log.WithFields(log.Fields{
@@ -74,6 +94,7 @@ func (t *Tracker) getLatestVersion(distributionURL string, lastModified time.Tim
 	if len(matches) != 3 {
 		log.WithFields(log.Fields{
 			"timestamp": time.Now().UnixNano(),
+			"matches":   matches,
 			"err":       err,
 		}).Error("Error finding latest version")
 		return "", errors.New("Could not find version in distribution")
@@ -89,6 +110,21 @@ func (t *Tracker) getLatestVersion(distributionURL string, lastModified time.Tim
 func (t *Tracker) updateOSVersionsMapFromProductMap(productMap *ProductMap, versionsInfo *VersionsInfo, lastModified time.Time) (bool, error) {
 	// Get the latest version for each of the 3 latest major releases
 	latestVersions := sort.StringSlice{}
+	if productMap.HighSierra != nil && productMap.HighSierra.Distributions != nil && productMap.HighSierra.Distributions.EnglishDistribution != "" {
+		highSierraVersion, err := t.getLatestVersion(productMap.HighSierra.Distributions.EnglishDistribution, lastModified)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"timestamp": time.Now().UnixNano(),
+				"err":       err,
+			}).Error("Error getting version for High Sierra")
+			return false, err
+		}
+
+		if highSierraVersion != "" {
+			latestVersions = append(latestVersions, highSierraVersion)
+		}
+	}
+
 	if productMap.Sierra != nil && productMap.Sierra.Distributions != nil && productMap.Sierra.Distributions.EnglishDistribution != "" {
 		sierraVersion, err := t.getLatestVersion(productMap.Sierra.Distributions.EnglishDistribution, lastModified)
 		if err != nil {
@@ -99,7 +135,9 @@ func (t *Tracker) updateOSVersionsMapFromProductMap(productMap *ProductMap, vers
 			return false, err
 		}
 
-		latestVersions = append(latestVersions, sierraVersion)
+		if sierraVersion != "" {
+			latestVersions = append(latestVersions, sierraVersion)
+		}
 	}
 
 	if productMap.ElCapitan != nil && productMap.ElCapitan.Distributions != nil && productMap.ElCapitan.Distributions.EnglishDistribution != "" {
@@ -112,7 +150,9 @@ func (t *Tracker) updateOSVersionsMapFromProductMap(productMap *ProductMap, vers
 			return false, err
 		}
 
-		latestVersions = append(latestVersions, elCapitanVersion)
+		if elCapitanVersion != "" {
+			latestVersions = append(latestVersions, elCapitanVersion)
+		}
 	}
 
 	if productMap.Yosemite != nil && productMap.Yosemite.Distributions != nil && productMap.Yosemite.Distributions.EnglishDistribution != "" {
@@ -125,20 +165,20 @@ func (t *Tracker) updateOSVersionsMapFromProductMap(productMap *ProductMap, vers
 			return false, err
 		}
 
-		latestVersions = append(latestVersions, yosemiteVersion)
+		if yosemiteVersion != "" {
+			latestVersions = append(latestVersions, yosemiteVersion)
+		}
 	}
 
-	sort.Sort(versionsInfo.LatestVersions)
-	sort.Sort(latestVersions)
-
-	if !equal(versionsInfo.LatestVersions, latestVersions) {
-		versionsInfo.LatestVersions = latestVersions
-		versionsInfo.LastModified = time.Now()
-
-		return true, nil
+	changed := false
+	for _, latestVersion := range latestVersions {
+		if latestVersion != "" {
+			versionsInfo.LatestVersions[latestVersion] = true
+			versionsInfo.LastModified = time.Now()
+			changed = true
+		}
 	}
-
-	return false, nil
+	return changed, nil
 }
 
 /**
@@ -184,7 +224,7 @@ func (t *Tracker) updateOSVersionsMap(url string) (bool, error) {
 	}
 
 	if versionsInfo.LatestVersions == nil {
-		versionsInfo.LatestVersions = []string{}
+		versionsInfo.LatestVersions = make(map[string]bool)
 	}
 
 	// Request product info from the catalog
