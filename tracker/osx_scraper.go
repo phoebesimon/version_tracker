@@ -1,17 +1,16 @@
 package tracker
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"regexp"
-	"sort"
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-version"
 	log "github.com/sirupsen/logrus"
 	"howett.net/plist"
 )
@@ -32,28 +31,51 @@ var MacCatalogs = map[string]string{
 }
 
 var VersionRegex = regexp.MustCompile(`(?ms)\s*"\s*(SU_VERS|SU_VERSION)\s*"\s*=\s*"\s*([0-9a-zA-Z\.\s]+)\s*"\s*;$`)
+var TitleRegex = regexp.MustCompile(`(?ms)\s*"\s*(SU_TITLE)\s*"\s*=\s*"\s*(macOS 10|macOS Sierra|OS X)([0-9a-zA-Z\.\s]+)\s*"\s*;$`)
+var DiscardRegex = regexp.MustCompile(`(?ms)\s*([0-9a-zA-Z\.\s]*)\s*(Mavericks|Recovery|Installer|Mail)\s*([0-9a-zA-Z\.\s]*)\s*$`)
 
-type ParsedCatalog struct {
-	Products *ProductMap `plist:"Products"`
-}
+var elCapitanMajor *version.Version
+var sierraMajor *version.Version
+var highSierraMajor *version.Version
 
-type ProductMap struct {
-	//SnowLeopard  *Product `plist:"zzz031-12177"` //10.6
-	//Lion         *Product `plist:"031-12217"`    //10.7
-	//MountainLion *Product `plist:"031-0630"`     //10.8
-	//Mavericks    *Product `plist:"031-07602"`    //10.9
-	Yosemite   *Product `plist:"031-30888"` //10.10
-	ElCapitan  *Product `plist:"031-63178"` //10.11
-	Sierra     *Product `plist:"091-22860"` //10.12
-	HighSierra *Product `plist:"091-39211"` //10.13
-}
+const (
+	version1011 = "10.11.0"
+	version1012 = "10.12.0"
+	version1013 = "10.13.0"
 
-type Product struct {
-	Distributions *DistributionMap `plist:"Distributions"`
-}
+	versionNameElCapitan  = "ElCapitan"
+	versionNameSierra     = "Sierra"
+	versionNameHighSierra = "HighSierra"
+)
 
-type DistributionMap struct {
-	EnglishDistribution string `plist:"English"`
+func init() {
+	var err error
+	elCapitanMajor, err = version.NewVersion(version1011)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err":     err,
+			"version": version1011,
+		}).Error("Could not parse static version")
+		panic("Error parsing static version")
+	}
+
+	sierraMajor, err = version.NewVersion(version1012)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err":     err,
+			"version": version1012,
+		}).Error("Could not parse static version")
+		panic("Error parsing static version")
+	}
+
+	highSierraMajor, err = version.NewVersion(version1013)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err":     err,
+			"version": version1013,
+		}).Error("Could not parse static version")
+		panic("Error parsing static version")
+	}
 }
 
 /**
@@ -89,6 +111,26 @@ func (t *Tracker) getLatestVersion(distributionURL string, lastModified time.Tim
 		return "", err
 	}
 
+	titleMatch := TitleRegex.FindStringSubmatch(string(body))
+	if len(titleMatch) != 4 {
+		log.WithFields(log.Fields{
+			"timestamp":  time.Now().UnixNano(),
+			"titleMatch": titleMatch,
+			"err":        err,
+		}).Debug("Was not a macOS version")
+		return "", nil
+	}
+
+	discardMatch := DiscardRegex.FindStringSubmatch(titleMatch[3])
+	if len(discardMatch) > 1 {
+		log.WithFields(log.Fields{
+			"timestamp":    time.Now().UnixNano(),
+			"discardMatch": discardMatch,
+			"err":          err,
+		}).Debug("Was not a macOS version")
+		return "", nil
+	}
+
 	// Pull out the version
 	matches := VersionRegex.FindStringSubmatch(string(body))
 	if len(matches) != 3 {
@@ -107,84 +149,104 @@ func (t *Tracker) getLatestVersion(distributionURL string, lastModified time.Tim
  * Update the version info from the product map info.
  * Returns true if it was updated, false otherwise.
  */
-func (t *Tracker) updateOSVersionsMapFromProductMap(productMap *ProductMap, versionsInfo *VersionsInfo, lastModified time.Time) (bool, error) {
-	// Get the latest version for each of the 3 latest major releases
-	latestVersions := sort.StringSlice{}
-	if productMap.HighSierra != nil && productMap.HighSierra.Distributions != nil && productMap.HighSierra.Distributions.EnglishDistribution != "" {
-		highSierraVersion, err := t.getLatestVersion(productMap.HighSierra.Distributions.EnglishDistribution, lastModified)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"timestamp": time.Now().UnixNano(),
-				"err":       err,
-			}).Error("Error getting version for High Sierra")
-			return false, err
-		}
+func (t *Tracker) updateOSVersionsMapFromProductMap(productCatalogInterface interface{}, versionsInfo *VersionsInfo, lastModified time.Time) (bool, error) {
+	productCatalogMap := productCatalogInterface.(map[string]interface{})
 
-		if highSierraVersion != "" {
-			latestVersions = append(latestVersions, highSierraVersion)
-		}
-	}
-
-	if productMap.Sierra != nil && productMap.Sierra.Distributions != nil && productMap.Sierra.Distributions.EnglishDistribution != "" {
-		sierraVersion, err := t.getLatestVersion(productMap.Sierra.Distributions.EnglishDistribution, lastModified)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"timestamp": time.Now().UnixNano(),
-				"err":       err,
-			}).Error("Error getting version for Sierra")
-			return false, err
-		}
-
-		if sierraVersion != "" {
-			latestVersions = append(latestVersions, sierraVersion)
-		}
-	}
-
-	if productMap.ElCapitan != nil && productMap.ElCapitan.Distributions != nil && productMap.ElCapitan.Distributions.EnglishDistribution != "" {
-		elCapitanVersion, err := t.getLatestVersion(productMap.ElCapitan.Distributions.EnglishDistribution, lastModified)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"timestamp": time.Now().UnixNano(),
-				"err":       err,
-			}).Error("Error getting version for El Capitan")
-			return false, err
-		}
-
-		if elCapitanVersion != "" {
-			latestVersions = append(latestVersions, elCapitanVersion)
-		}
-	}
-
-	if productMap.Yosemite != nil && productMap.Yosemite.Distributions != nil && productMap.Yosemite.Distributions.EnglishDistribution != "" {
-		yosemiteVersion, err := t.getLatestVersion(productMap.Yosemite.Distributions.EnglishDistribution, lastModified)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"timestamp": time.Now().UnixNano(),
-				"err":       err,
-			}).Error("Error getting version for Yosemite")
-			return false, err
-		}
-
-		if yosemiteVersion != "" {
-			latestVersions = append(latestVersions, yosemiteVersion)
-		}
+	productsMap, ok := productCatalogMap["Products"].(map[string]interface{})
+	if !ok {
+		return false, errors.New("Could not parse products")
 	}
 
 	changed := false
-	for _, latestVersion := range latestVersions {
-		if latestVersion != "" {
-			versionsInfo.LatestVersions[latestVersion] = true
-			versionsInfo.LastModified = time.Now()
-			changed = true
+	for key, product := range productsMap {
+		productInfo, ok := product.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		distributions, ok := productInfo["Distributions"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		englishDistribution, ok := distributions["English"].(string)
+		if !ok {
+			continue
+		}
+
+		ver, err := t.getLatestVersion(englishDistribution, lastModified)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"err": err,
+				"englishDistributionURL": englishDistribution,
+				"key": key,
+			}).Info("Failed to get version info")
+			continue
+		}
+
+		if ver == "" {
+			continue
+		}
+
+		v1, err := version.NewVersion(ver)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"err": err,
+				"englishDistributionURL": englishDistribution,
+				"key":     key,
+				"version": ver,
+			}).Error("Could not parse version")
+			continue
+		}
+
+		//The oldest major version we support
+		if v1.LessThan(elCapitanMajor) {
+			log.WithFields(log.Fields{
+				"err": err,
+				"englishDistributionURL": englishDistribution,
+				"key":     key,
+				"version": ver,
+			}).Debug("Not tracked version")
+			continue
+		}
+
+		if v1.GreaterThan(highSierraMajor) {
+			t.mtx.Lock()
+			latestHighSierraVersion, ok := versionsInfo.LatestVersions[versionNameHighSierra]
+			if !ok || v1.GreaterThan(latestHighSierraVersion) {
+				versionsInfo.LatestVersions[versionNameHighSierra] = v1
+				versionsInfo.LastModified = time.Now()
+				changed = true
+			}
+			t.mtx.Unlock()
+		} else if v1.GreaterThan(sierraMajor) {
+			t.mtx.Lock()
+			latestSierraVersion, ok := versionsInfo.LatestVersions[versionNameSierra]
+			if !ok || v1.GreaterThan(latestSierraVersion) {
+
+				versionsInfo.LatestVersions[versionNameSierra] = v1
+				versionsInfo.LastModified = time.Now()
+				changed = true
+			}
+			t.mtx.Unlock()
+		} else if v1.GreaterThan(elCapitanMajor) {
+			t.mtx.Lock()
+			latestElCapitanVersion, ok := versionsInfo.LatestVersions[versionNameElCapitan]
+			if !ok || v1.GreaterThan(latestElCapitanVersion) {
+				versionsInfo.LatestVersions[versionNameElCapitan] = v1
+				versionsInfo.LastModified = time.Now()
+				changed = true
+			}
+			t.mtx.Unlock()
 		}
 	}
+
 	return changed, nil
 }
 
 /**
  * Parses a response from the catalog URL into a ProductMap
  */
-func (t *Tracker) parseCatalogResponse(resp *http.Response) (*ProductMap, error) {
+func (t *Tracker) parseCatalogResponse(resp *http.Response) (interface{}, error) {
 	body, err := ioutil.ReadAll(io.Reader(resp.Body))
 	if err != nil {
 		log.WithFields(log.Fields{
@@ -194,19 +256,18 @@ func (t *Tracker) parseCatalogResponse(resp *http.Response) (*ProductMap, error)
 		return nil, err
 	}
 
-	decoder := plist.NewDecoder(bytes.NewReader(body))
-	parsedCatalog := &ParsedCatalog{}
-	err = decoder.Decode(parsedCatalog)
+	var parsedCatalog interface{}
+	_, err = plist.Unmarshal(body, &parsedCatalog)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"timestamp": time.Now().UnixNano(),
 			"err":       err,
 			"body":      string(body),
-		}).Error("Error decoding response")
+		}).Error("Error unmarshalling response")
 		return nil, err
 	}
 
-	return parsedCatalog.Products, nil
+	return parsedCatalog, nil
 }
 
 /**
@@ -224,7 +285,7 @@ func (t *Tracker) updateOSVersionsMap(url string) (bool, error) {
 	}
 
 	if versionsInfo.LatestVersions == nil {
-		versionsInfo.LatestVersions = make(map[string]bool)
+		versionsInfo.LatestVersions = make(map[string]*version.Version)
 	}
 
 	// Request product info from the catalog

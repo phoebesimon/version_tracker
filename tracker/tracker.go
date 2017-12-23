@@ -3,10 +3,10 @@ package tracker
 import (
 	"context"
 	"net/http"
-	"sort"
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-version"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -17,30 +17,15 @@ const (
 )
 
 type VersionsInfo struct {
-	LatestVersions map[string]bool
+	LatestVersions map[string]*version.Version
 	LastModified   time.Time
 }
 
 type Tracker struct {
-	listenAddr    string
 	interval      int
 	osVersionsMap map[string]*VersionsInfo // OS Type --> latest versions/lastModified
 	wg            sync.WaitGroup
-	lock          sync.RWMutex
-}
-
-func equal(a, b sort.StringSlice) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i, val := range a {
-		if b[i] != val {
-			return false
-		}
-	}
-
-	return true
+	mtx           sync.RWMutex
 }
 
 func (t *Tracker) Close() {
@@ -52,6 +37,13 @@ func (t *Tracker) Start(ctx context.Context) {
 	defer t.wg.Done()
 
 	t.mainLoop(ctx)
+}
+
+func (t *Tracker) ReadVersions(os string) *VersionsInfo {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+
+	return t.osVersionsMap[os]
 }
 
 func (t *Tracker) makeRequest(path string, lastModified time.Time) (*http.Response, error) {
@@ -76,6 +68,11 @@ func (t *Tracker) makeRequest(path string, lastModified time.Time) (*http.Respon
 }
 
 func (t *Tracker) mainLoop(ctx context.Context) {
+	log.WithField("timestamp", time.Now().UnixNano()).Debug("Scraping...")
+
+	t.ScrapeForMacVersions()
+
+	log.WithField("timestamp", time.Now().UnixNano()).Debug("Finished scraping.")
 	timer := time.NewTicker(time.Duration(t.interval) * time.Second)
 
 	for {
@@ -95,25 +92,25 @@ func (t *Tracker) mainLoop(ctx context.Context) {
 	}
 }
 
-func MakeTracker(addr string, interval int) *Tracker {
+func MakeTracker(interval int) *Tracker {
 	osVersionsMap := make(map[string]*VersionsInfo)
 
 	osVersionsMap[OSTypeMac] = &VersionsInfo{
-		LatestVersions: map[string]bool{},
+		LatestVersions: map[string]*version.Version{},
 		LastModified:   time.Time{},
 	}
 	osVersionsMap[OSTypeWindows] = &VersionsInfo{
-		LatestVersions: map[string]bool{},
+		LatestVersions: map[string]*version.Version{},
 		LastModified:   time.Time{},
 	}
 	osVersionsMap[OSTypeLinux] = &VersionsInfo{
-		LatestVersions: map[string]bool{},
+		LatestVersions: map[string]*version.Version{},
 		LastModified:   time.Time{},
 	}
 
 	return &Tracker{
-		listenAddr:    addr,
 		interval:      interval,
 		osVersionsMap: osVersionsMap,
+		mtx:           sync.RWMutex{},
 	}
 }

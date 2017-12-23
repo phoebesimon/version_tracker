@@ -17,13 +17,10 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "latest-os-version-tracker"
 	app.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:  "addr",
-			Usage: "The address the tracker is listening on (i.e. localhost:2370)",
-		},
-		cli.StringFlag{
+		cli.IntFlag{
 			Name:  "interval",
-			Usage: "How often (in seconds) to check if a new patch is out (defaults to 60)",
+			Usage: "How often (in seconds) to check if a new patch is out (defaults to 300)",
+			Value: 300,
 		},
 		cli.BoolFlag{
 			Name:  "debug",
@@ -32,15 +29,7 @@ func main() {
 	}
 
 	app.Action = func(c *cli.Context) error {
-		interval := 20
-		if c.IsSet("interval") {
-			interval = c.Int("interval")
-		}
-
-		//if !c.IsSet("addr") {
-		//	fmt.Println("An address to run prometheus on is required (e.g. --metrics-addr localhost:8080)")
-		//	os.Exit(1)
-		//}
+		interval := c.Int("interval")
 
 		if c.IsSet("debug") {
 			log.SetLevel(log.DebugLevel)
@@ -52,13 +41,13 @@ func main() {
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		exporter := tracker.MakeTracker(c.String("addr"), interval)
-		go exporter.Start(ctx)
+		versionTracker := tracker.MakeTracker(interval)
+		go versionTracker.Start(ctx)
 
 		<-done
 		cancel()
 
-		exporter.Close()
+		versionTracker.Close()
 
 		return nil
 	}
