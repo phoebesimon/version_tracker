@@ -1,14 +1,21 @@
-hash: 3fa12cde968c8f5070108f1dbfbe35610da47f165086916acace2cd03bff526e
-updated: 2017-05-24T20:31:25.704575678Z
+hash: 88eb63e4561ad3fda0399ebd53210b4abdf873587b0d979a2eee1015c722741e
+updated: 2017-12-22T14:24:49.300208-08:00
 imports:
+- name: github.com/hashicorp/go-version
+  version: 4fe82ae3040f80a03d04d2cccb5606a626b8e1ee
 - name: github.com/sirupsen/logrus
-  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
+  version: 95cd2b9c79aa5e72ab0bc69b7ccc2be15bf850f6
 - name: github.com/urfave/cli
   version: 0bdeddeeb0f650497d603c4ad7b20cfe685682f6
+- name: golang.org/x/crypto
+  version: 9419663f5a44be8b34ca85f08abc5fe1be11f8a3
+  subpackages:
+  - ssh/terminal
 - name: golang.org/x/sys
   version: 9f30dcbe5be197894515a338a9bda9253567ea8f
   subpackages:
   - unix
+  - windows
 - name: howett.net/plist
   version: 2f847ea62b17703c861484a09f0e5841328a2cb9
 testImports: []
